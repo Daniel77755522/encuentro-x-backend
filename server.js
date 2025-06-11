@@ -47,7 +47,7 @@ const server = http.createServer(app);
 // 2. Configura Socket.IO para que escuche en este servidor HTTP
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:3000", // Permite conexiones WebSocket desde tu frontend de React
+        origin: "https://encuentro-x-frontend.onrender.com", // Permite conexiones WebSocket desde tu frontend de React
         methods: ["GET", "POST"] // Métodos HTTP permitidos para la conexión (para el "handshake")
     }
 });
