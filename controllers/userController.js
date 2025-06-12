@@ -1,161 +1,151 @@
-const asyncHandler = require('express-async-handler');
-const User = require('../models/User');
-// const bcrypt = require('bcryptjs'); // <-- Puedes comentar o eliminar esta línea si no usas bcrypt en otra parte de este archivo
+const User = require('../models/User'); // Asegúrate de que la ruta sea correcta
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// Función para generar JWT (JSON Web Token)
-const generateToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-};
+// ** IMPORTANTE: Si tienes un modelo de mensajes o posts que se vincula al usuario, impórtalo aquí **
+const Message = require('../models/Message'); // Reemplaza por el nombre de tu modelo de mensajes/posts si es diferente
+// const Post = require('../models/Post'); // Si también tienes posts vinculados al usuario
 
-// @desc    Registrar un nuevo usuario
+// --- Funciones de Autenticación existentes (Login, Register) ---
+
+// @desc    Registrar nuevo usuario
 // @route   POST /api/users/register
 // @access  Public
-const registerUser = asyncHandler(async (req, res) => {
-    console.log('--- Petición de registro recibida ---');
-    console.log('Cuerpo de la petición (req.body):', req.body);
-
+exports.registerUser = async (req, res) => {
     const { username, email, password } = req.body;
 
-    if (!username || !email || !password) {
-        res.status(400);
-        throw new Error('Por favor, introduce todos los campos: nombre de usuario, email y contraseña.');
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        res.status(400);
-        throw new Error('El formato del email no es válido.');
-    }
-
-    if (password.length < 6) {
-        res.status(400);
-        throw new Error('La contraseña debe tener al menos 6 caracteres.');
-    }
-
-    const userExists = await User.findOne({ $or: [{ email }, { username }] });
-    if (userExists) {
-        res.status(400);
-        if (userExists.email === email) {
-            throw new Error('El email ya está registrado. Por favor, usa otro.');
-        } else {
-            throw new Error('El nombre de usuario ya está en uso. Por favor, elige otro.');
+    try {
+        // Verificar si el usuario ya existe
+        let user = await User.findOne({ email });
+        if (user) {
+            return res.status(400).json({ message: 'El usuario ya existe con este email.' });
         }
-    }
 
-    // --- ESTAS SON LAS LÍNEAS QUE DEBES QUITAR ---
-    // const salt = await bcrypt.genSalt(10);
-    // const hashedPassword = await bcrypt.hash(password, salt);
-    // console.log('Contraseña hasheada (generada para DB):', hashedPassword); // Este log ya no es necesario aquí
+        // Crear nuevo usuario
+        user = new User({
+            username,
+            email,
+            password
+        });
 
-    // --- NUEVO console.log para ver la contraseña antes de pasarla al modelo ---
-    console.log('Contraseña recibida (texto plano) antes de pasar al modelo:', password);
+        // Encriptar contraseña
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(password, salt);
 
+        await user.save();
 
-    // Aquí pasas la contraseña EN TEXTO PLANO.
-    // Tu modelo User.js (con el hook pre('save')) se encargará de hashearla antes de guardarla.
-    const user = await User.create({
-        username,
-        // Asegúrate de que el email se guarda en minúsculas si así lo quieres en el esquema
-        // (tu esquema ya tiene lowercase: true, así que no es estrictamente necesario aquí,
-        // pero es buena práctica si la lógica de minúsculas no estuviera en el modelo)
-        email: email.toLowerCase(),
-        password: password, // <--- ¡Pasa la contraseña en texto plano aquí!
-    });
-
-    if (user) {
-        // --- NUEVO console.log para ver el hash FINAL que se ha guardado ---
-        console.log('Usuario registrado exitosamente en DB:', user.email);
-        console.log('Hash de contraseña FINAL guardado en DB (desde user.password):', user.password);
+        // Generar JWT
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
         res.status(201).json({
             message: 'Usuario registrado exitosamente',
-            token: generateToken(user._id),
             user: {
-                id: user._id,
+                _id: user._id,
                 username: user.username,
-                email: user.email,
+                email: user.email
             },
+            token
         });
-    } else {
-        res.status(400);
-        throw new Error('Datos de usuario inválidos. No se pudo crear el usuario.');
-    }
-});
 
-// @desc    Autenticar un usuario e iniciar sesión
+    } catch (error) {
+        console.error(error.message);
+        res.status(500).send('Error del servidor');
+    }
+};
+
+// @desc    Autenticar usuario y obtener token
 // @route   POST /api/users/login
 // @access  Public
-const loginUser = asyncHandler(async (req, res) => {
+exports.loginUser = async (req, res) => {
     const { email, password } = req.body;
 
-    console.log('\n--- Intentando iniciar sesión ---');
-    console.log('Email recibido del frontend para login:', email);
-    console.log('Contraseña recibida del frontend para login (texto plano):', password);
+    try {
+        // Verificar si el usuario existe
+        let user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ message: 'Credenciales inválidas.' });
+        }
 
-    if (!email || !password) {
-        res.status(400);
-        throw new Error('Por favor, introduce el email y la contraseña.');
+        // Comparar contraseña
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Credenciales inválidas.' });
+        }
+
+        // Generar JWT
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+        res.json({
+            message: 'Inicio de sesión exitoso',
+            user: {
+                _id: user._id,
+                username: user.username,
+                email: user.email
+            },
+            token
+        });
+
+    } catch (error) {
+        console.error(error.message);
+        res.status(500).send('Error del servidor');
     }
+};
 
-    // Encuentra al usuario por email
-    const user = await User.findOne({ email: email.toLowerCase() }); // Asegúrate de buscar con email en minúsculas
-
-    if (!user) {
-        console.log('Usuario NO encontrado en la base de datos con ese email.');
-        res.status(400);
-        throw new new Error('Credenciales inválidas. Por favor, verifica tu email y contraseña.');
-    }
-
-    console.log('Usuario ENCONTRADO en la base de datos:', user.email);
-    console.log('Contraseña hasheada del usuario en DB (recuperada de la DB):', user.password);
-
-    // Compara la contraseña ingresada con la hasheada en la base de datos
-    // Usa el método matchPassword del modelo (es más limpio)
-    const isMatch = await user.matchPassword(password); // <--- Usando el método del modelo
-
-    console.log('Resultado de user.matchPassword (isMatch):', isMatch);
-
-    if (!isMatch) {
-        console.log('La comparación de contraseñas FALLÓ.');
-        res.status(400);
-        throw new Error('Credenciales inválidas. Por favor, verifica tu email y contraseña.');
-    }
-
-    // Si la contraseña es correcta, generar el token JWT
-    console.log('La comparación de contraseñas fue EXITOSA. Generando token...');
-    res.status(200).json({
-        message: 'Inicio de sesión exitoso',
-        token: generateToken(user._id),
-        user: {
-            id: user._id,
-            username: user.username,
-            email: user.email,
-        },
-    });
-});
-
-// @desc    Obtener datos del usuario
+// @desc    Obtener datos del perfil del usuario (ejemplo, puede no ser necesario si ya tienes el user en el frontend)
 // @route   GET /api/users/me
-// @access  Privado
-const getMe = asyncHandler(async (req, res) => {
-    // req.user es adjuntado por el middleware 'protect'.
-    // Contiene la información del usuario autenticado que viene del token.
-    const user = await User.findById(req.user.id).select('-password');
-
-    if (!user) {
-        res.status(404);
-        throw new Error('Usuario no encontrado.');
+// @access  Private (requiere autenticación)
+exports.getMe = async (req, res) => {
+    try {
+        // req.user viene del middleware de autenticación
+        const user = await User.findById(req.user.id).select('-password'); // No devolver la contraseña
+        if (!user) {
+            return res.status(404).json({ message: 'Usuario no encontrado.' });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error(error.message);
+        res.status(500).send('Error del servidor');
     }
+};
 
-    res.status(200).json({
-        id: user._id,
-        username: user.username,
-        email: user.email,
-    });
-});
 
-module.exports = {
-    registerUser,
-    loginUser,
-    getMe,
+// --- NUEVA FUNCIÓN: Eliminar Cuenta de Usuario ---
+// @desc    Eliminar la cuenta del usuario autenticado y sus datos asociados
+// @route   DELETE /api/users/me
+// @access  Private (requiere autenticación)
+exports.deleteUserAccount = async (req, res) => {
+    try {
+        // El ID del usuario se obtiene del token JWT decodificado por el middleware de autenticación
+        const userIdToDelete = req.user.id; // Asumiendo que el ID del usuario está en req.user.id o req.user._id
+
+        // 1. **ELIMINAR TODOS LOS DATOS ASOCIADOS AL USUARIO**
+        // Este es el paso más CRÍTICO y depende de cómo enlaces los datos en tu base de datos.
+        // Asegúrate de que las propiedades coincidan con cómo guardas el ID del remitente.
+
+        // Ejemplo: Eliminar todos los mensajes enviados por este usuario
+        // Si tu modelo de Message tiene un campo 'senderId' que guarda el ObjectId del usuario
+        if (Message) { // Verifica si Message fue importado
+             await Message.deleteMany({ senderId: userIdToDelete });
+             console.log(`Mensajes del usuario ${userIdToDelete} eliminados.`);
+        }
+
+        // Si tienes otros modelos (ej. Posts, Comments) vinculados al usuario, ELIMÍNALOS TAMBIÉN:
+        // if (Post) { await Post.deleteMany({ author: userIdToDelete }); }
+        // if (Comment) { await Comment.deleteMany({ author: userIdToDelete }); }
+        // ... repite para cualquier otra colección donde el usuario sea "dueño" de datos.
+
+        // 2. Eliminar el usuario de la colección de Usuarios
+        const deletedUser = await User.findByIdAndDelete(userIdToDelete);
+
+        if (!deletedUser) {
+            return res.status(404).json({ message: 'Usuario no encontrado para eliminar.' });
+        }
+
+        // 3. Respuesta de éxito
+        res.status(200).json({ message: 'Cuenta y datos asociados eliminados exitosamente.' });
+
+    } catch (error) {
+        console.error('Error al eliminar la cuenta de usuario:', error.message);
+        res.status(500).send('Error del servidor al eliminar la cuenta.');
+    }
 };
