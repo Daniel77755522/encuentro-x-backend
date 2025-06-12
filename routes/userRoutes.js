@@ -2,10 +2,11 @@ const express = require('express');
 const router = express.Router(); // Crea un enrutador Express
 
 // Importa los controladores de usuario
-const { registerUser, loginUser } = require('../controllers/userController');
+// Asegúrate de que deleteUserAccount esté exportado en userController.js
+const { registerUser, loginUser, deleteUserAccount } = require('../controllers/userController'); // <--- AÑADE deleteUserAccount aquí
 
 // Importa el middleware de autenticación
-const { protect } = require('../middleware/authMiddleware'); // <--- ¡Asegúrate de que esta línea esté presente!
+const { protect } = require('../middleware/authMiddleware');
 
 // RUTAS PÚBLICAS (no requieren autenticación)
 // Ruta para el registro de un nuevo usuario
@@ -17,8 +18,9 @@ router.post('/register', registerUser);
 router.post('/login', loginUser);
 
 // RUTAS PROTEGIDAS (requieren autenticación)
-// Ruta protegida de prueba para obtener el perfil del usuario autenticado
-// GET /api/users/profile
+
+// Ruta protegida para obtener el perfil del usuario autenticado
+// GET /api/users/me
 // El middleware 'protect' se ejecuta antes de la función de la ruta
 router.get('/me', protect, (req, res) => {
     // Si la petición llega aquí, significa que el middleware 'protect' ha validado el token
@@ -32,5 +34,10 @@ router.get('/me', protect, (req, res) => {
         },
     });
 });
+
+// --- NUEVA RUTA: Eliminar cuenta de usuario ---
+// DELETE /api/users/me
+// Esta ruta debe ser protegida con el middleware 'protect'
+router.delete('/me', protect, deleteUserAccount); // <--- AÑADE ESTA LÍNEA
 
 module.exports = router;
