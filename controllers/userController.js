@@ -21,21 +21,18 @@ exports.registerUser = async (req, res) => {
             return res.status(400).json({ message: 'El usuario ya existe con este email.' });
         }
 
-        // Crear nuevo usuario
+        // Crear nuevo usuario con la contraseña en texto plano
+        // El hasheo se realizará automáticamente por el middleware pre('save') en el modelo User.js
         user = new User({
             username,
             email,
-            password
+            password // Pasa la contraseña en texto plano al modelo
         });
 
-        // Encriptar contraseña
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(password, salt);
-
-        await user.save();
+        await user.save(); // Dispara el middleware pre('save') en User.js para hashear la contraseña
 
         // Generar JWT
-        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' }); // Tiempo de expiración: 7 días
 
         res.status(201).json({
             message: 'Usuario registrado exitosamente',
@@ -67,20 +64,24 @@ exports.loginUser = async (req, res) => {
         }
 
         // Comparar contraseña
+        // El método matchPassword utiliza bcrypt.compare para comparar la contraseña ingresada
+        // (que se hashea internamente) con la contraseña hasheada guardada en la base de datos.
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'Credenciales inválidas.' });
         }
 
         // Generar JWT
-        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' }); // Tiempo de expiración: 7 días
 
         res.json({
             message: 'Inicio de sesión exitoso',
             user: {
                 _id: user._id,
                 username: user.username,
-                email: user.email
+                email: user.email,
+                // Asegúrate de devolver también 'blockedUsers' si tu modelo User lo tiene
+                blockedUsers: user.blockedUsers // Añadir esta línea si el campo existe en tu modelo User
             },
             token
         });
@@ -96,7 +97,7 @@ exports.loginUser = async (req, res) => {
 // @access  Private (requiere autenticación)
 exports.getMe = async (req, res) => {
     try {
-        // req.user viene del middleware de autenticación
+        // req.user viene del middleware de autenticación (que decodifica el JWT)
         const user = await User.findById(req.user.id).select('-password'); // No devolver la contraseña
         if (!user) {
             return res.status(404).json({ message: 'Usuario no encontrado.' });
@@ -116,17 +117,18 @@ exports.getMe = async (req, res) => {
 exports.deleteUserAccount = async (req, res) => {
     try {
         // El ID del usuario se obtiene del token JWT decodificado por el middleware de autenticación
-        const userIdToDelete = req.user.id; // Asumiendo que el ID del usuario está en req.user.id o req.user._id
+        const userIdToDelete = req.user.id; // Asumiendo que el ID del usuario está en req.user.id
 
         // 1. **ELIMINAR TODOS LOS DATOS ASOCIADOS AL USUARIO**
         // Este es el paso más CRÍTICO y depende de cómo enlaces los datos en tu base de datos.
         // Asegúrate de que las propiedades coincidan con cómo guardas el ID del remitente.
 
         // Ejemplo: Eliminar todos los mensajes enviados por este usuario
-        // Si tu modelo de Message tiene un campo 'senderId' que guarda el ObjectId del usuario
+        // Si tu modelo de Message tiene un campo 'sender' o 'senderId' que guarda el ObjectId del usuario
         if (Message) { // Verifica si Message fue importado
-             await Message.deleteMany({ senderId: userIdToDelete });
-             console.log(`Mensajes del usuario ${userIdToDelete} eliminados.`);
+            // Ajusta 'sender' a la propiedad que usas para el ID del remitente en tu modelo Message
+            await Message.deleteMany({ sender: userIdToDelete }); 
+            console.log(`Mensajes del usuario ${userIdToDelete} eliminados.`);
         }
 
         // Si tienes otros modelos (ej. Posts, Comments) vinculados al usuario, ELIMÍNALOS TAMBIÉN:
